@@ -23,7 +23,7 @@ chmod +x $PREFIX/bin/3proxy
 
 echo "[*] Configurando servidor de conexão..."
 mkdir -p $PREFIX/etc/3proxy
-cat > $PREFIX/etc/3proxy/3proxy.cfg <<EOF
+cat > $PREFIX/etc/3proxy/3proxy.cfg <<'EOF'
 nscache 65536
 nserver 8.8.8.8
 nserver 1.1.1.1
@@ -68,11 +68,11 @@ echo "PORTA REMOTA = $RANDOM_PORT" >> INFO.txt
 
 echo "[*] Ativando inicialização automática do Proxy Imperial..."
 mkdir -p ~/.termux/boot
-cat > ~/.termux/boot/autostart.sh <<EOF
+cat > ~/.termux/boot/autostart.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 termux-wake-lock
 sleep 3
-nohup env LD_LIBRARY_PATH=\$PREFIX/lib \$PREFIX/bin/3proxy \$PREFIX/etc/3proxy/3proxy.cfg > ~/proxy_server.log 2>&1 &
+nohup env LD_LIBRARY_PATH=$PREFIX/lib $PREFIX/bin/3proxy $PREFIX/etc/3proxy/3proxy.cfg > ~/proxy_server.log 2>&1 &
 nohup ~/proxy_node/flux/flux -c ~/proxy_node/flux/flux.ini > ~/proxy_node/flux/flux.log 2>&1 &
 EOF
 chmod +x ~/.termux/boot/autostart.sh
