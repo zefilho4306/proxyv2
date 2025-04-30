@@ -1,352 +1,227 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -e
 
-echo "========================================"
-echo "[*] Instalando Proxy Imperial (GoLang)"
-echo "========================================"
+echo "==========================================="
+echo "🚀 Instalador Proxy Imperial (Alta Performance)"
+echo "==========================================="
 
-# Verificar se está no Termux
+# Verifica ambiente
 if [ ! -d "/data/data/com.termux/files" ]; then
-    echo "❌ Este script deve ser executado no Termux!"
-    exit 1
+  echo "❌ Este script deve ser executado no Termux!"
+  exit 1
 fi
 
-# Atualizar e instalar pacotes necessários
-echo "[*] Instalando dependências..."
-pkg update -y >/dev/null 2>&1 && pkg upgrade -y >/dev/null 2>&1 || { echo "❌ Falha ao atualizar pacotes!"; exit 1; }
-pkg install -y git golang termux-api >/dev/null 2>&1 || { echo "❌ Falha ao instalar pacotes!"; exit 1; }
-
-# Verificar ambiente Go
-go version >/dev/null 2>&1 || { echo "❌ Ambiente Go não está configurado corretamente!"; exit 1; }
-
-# Manter dispositivo acordado
+# Acorda o celular
 termux-wake-lock
+mkdir -p ~/proxy_node/server ~/proxy_node/flux
 
-# Seleção do nível de desempenho
+echo "[1/7] 🔄 Atualizando Termux..."
+pkg update -y && pkg upgrade -y
+
+echo "[2/7] 📦 Instalando dependências..."
+pkg install -y git golang wget termux-api
+
+# Verifica Go
+go version || { echo "❌ Go não está instalado corretamente!"; exit 1; }
+
 echo ""
-echo "[*] Nível de desempenho do celular:"
-echo "1 = Fraco (2-3GB RAM)"
+echo "[3/7] ⚙️ Escolha o nível do seu dispositivo:"
+echo "1 = Fraco (até 3GB RAM)"
 echo "2 = Médio (4-6GB RAM)"
 echo "3 = Forte (6GB+ RAM)"
 read -p "Escolha [1-3]: " NIVEL
+[[ "$NIVEL" =~ ^[1-3]$ ]] || { echo "❌ Escolha inválida."; exit 1; }
 
-# Validar entrada
-if [[ ! "$NIVEL" =~ ^[1-3]$ ]]; then
-    echo "❌ Nível inválido! Escolha 1, 2 ou 3."
-    exit 1
-fi
-
-# Definir configurações com base no nível
 case $NIVEL in
-    1)
-        MAX_IDLE=50
-        ;;
-    2)
-        MAX_IDLE=150
-        ;;
-    3)
-        MAX_IDLE=300
-        ;;
+  1) MAX_IDLE=50; BUFFSIZE=8192 ;;
+  2) MAX_IDLE=150; BUFFSIZE=16384 ;;
+  3) MAX_IDLE=300; BUFFSIZE=65536 ;;
 esac
 
-# Criar diretórios
-mkdir -p ~/proxy_node/server
+########################################
+# 4. Proxy Go otimizado
+########################################
 cd ~/proxy_node/server
 
-# Criar código Go do proxy
-cat > proxy.go <<'EOF'
+cat > proxy.go <<EOF
 package main
 
 import (
-    "context"
-    "crypto/tls"
-    "flag"
-    "io"
-    "log"
-    "net"
-    "net/http"
-    "os"
-    "os/signal"
-    "runtime"
-    "runtime/debug"
-    "sync"
-    "sync/atomic"
-    "syscall"
-    "time"
-
-    "golang.org/x/time/rate"
+  "context"
+  "crypto/tls"
+  "flag"
+  "io"
+  "log"
+  "net"
+  "net/http"
+  "os"
+  "os/signal"
+  "runtime"
+  "syscall"
+  "time"
 )
 
 var (
-    listenAddr    = flag.String("listen", ":8080", "Endereço de escuta")
-    maxIdleConns  = flag.Int("max-idle", 200, "Conexões ociosas máximas")
-    maxIdleTime   = flag.Duration("idle-time", 2*time.Minute, "Tempo máximo ocioso")
-    connTimeout   = flag.Duration("conn-timeout", 15*time.Second, "Timeout de conexão")
-    enableMetrics = flag.Bool("metrics", true, "Habilitar métricas")
-    insecure      = flag.Bool("insecure", false, "Ignorar SSL")
-    rateLimit     = flag.Int("rate-limit", 0, "Limite req/s")
-    deviceLevel   = flag.Int("device-level", 2, "Nível de desempenho do dispositivo (1=fraco, 2=médio, 3=forte)")
+  listenAddr  = flag.String("listen", ":8080", "Endereço de escuta")
+  bufferSize  = flag.Int("buffer", $BUFFSIZE, "Tamanho do buffer")
+  connTimeout = flag.Duration("conn-timeout", 20*time.Second, "Timeout de conexão")
 )
-
-var (
-    activeConns    int64
-    totalRequests  int64
-    activeRequests int64
-    bufferPool     sync.Pool
-    limiter        *rate.Limiter
-    bufferSize     int
-)
-
-func init() {
-    bufferSize = 16 * 1024
-    switch *deviceLevel {
-    case 1:
-        bufferSize = 8 * 1024
-    case 2:
-        bufferSize = 16 * 1024
-    case 3:
-        bufferSize = 64 * 1024
-    }
-
-    bufferPool = sync.Pool{
-        New: func() interface{} {
-            b := make([]byte, bufferSize)
-            return &b
-        },
-    }
-
-    if *rateLimit > 0 {
-        limiter = rate.NewLimiter(rate.Limit(*rateLimit), *rateLimit*2)
-    }
-}
 
 func main() {
-    flag.Parse()
-    optimizeForMobile()
+  flag.Parse()
+  runtime.GOMAXPROCS(runtime.NumCPU())
 
-    transport := createOptimizedTransport()
-    server := &http.Server{
-        Addr:              *listenAddr,
-        Handler:           proxyHandler(transport),
-        IdleTimeout:       *connTimeout,
-        ReadHeaderTimeout: 5 * time.Second,
-        MaxHeaderBytes:    1 << 18,
-    }
+  server := &http.Server{
+    Addr:              *listenAddr,
+    Handler:           http.HandlerFunc(handle),
+    IdleTimeout:       60 * time.Second,
+    ReadHeaderTimeout: 10 * time.Second,
+    MaxHeaderBytes:    1 << 18,
+  }
 
-    go handleSignals(server)
-    if *enableMetrics {
-        go resourceMonitor()
-    }
+  go func() {
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+    <-c
+    log.Println("🛑 Encerrando...")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    server.Shutdown(ctx)
+  }()
 
-    log.Printf("🚀 Proxy iniciado em %s (Go %s)", *listenAddr, runtime.Version())
-    log.Printf("💻 CPUs: %d | Goroutines: %d | Buffer: %d KB", runtime.NumCPU(), runtime.NumGoroutine(), bufferSize/1024)
-
-    if err := server.ListenAndServe(); err != http.ErrServerClosed {
-        log.Fatalf("Erro fatal: %v", err)
-    }
+  log.Println("🚀 Proxy iniciado em", *listenAddr)
+  log.Printf("🧠 Buffer: %d KB | CPUs: %d", *bufferSize/1024, runtime.NumCPU())
+  if err := server.ListenAndServe(); err != http.ErrServerClosed {
+    log.Fatal("Erro:", err)
+  }
 }
 
-func optimizeForMobile() {
-    runtime.GOMAXPROCS(runtime.NumCPU())
-    debug.SetGCPercent(30)
-    debug.SetMaxStack(16 << 18)
-    if err := syscall.Setpriority(syscall.PRIO_PROCESS, 0, -10); err == nil {
-        log.Println("Prioridade do processo aumentada")
-    }
-}
-
-func createOptimizedTransport() *http.Transport {
-    return &http.Transport{
-        DialContext: (&net.Dialer{
-            Timeout:       *connTimeout,
-            KeepAlive:     30 * time.Second,
-            FallbackDelay: 300 * time.Millisecond,
-            DualStack:     true,
-        }).DialContext,
-        MaxIdleConns:        *maxIdleConns,
-        MaxIdleConnsPerHost: runtime.NumCPU() * 4,
-        IdleConnTimeout:     *maxIdleTime,
-        TLSHandshakeTimeout: 8 * time.Second,
-        TLSClientConfig: &tls.Config{
-            InsecureSkipVerify: *insecure,
-            MinVersion:         tls.VersionTLS12,
-        },
-        ForceAttemptHTTP2:     true,
-        ExpectContinueTimeout: 1 * time.Second,
-    }
-}
-
-func proxyHandler(transport *http.Transport) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if *rateLimit > 0 && !limiter.Allow() {
-            http.Error(w, "Rate limit excedido", http.StatusTooManyRequests)
-            return
-        }
-        atomic.AddInt64(&activeRequests, 1)
-        defer atomic.AddInt64(&activeRequests, -1)
-        atomic.AddInt64(&totalRequests, 1)
-        atomic.AddInt64(&activeConns, 1)
-        defer atomic.AddInt64(&activeConns, -1)
-        defer recoverPanic()
-
-        log.Printf("Requisição de %s para %s", r.RemoteAddr, r.URL.String())
-
-        if r.Method == http.MethodConnect {
-            handleTunnel(w, r)
-        } else {
-            handleHTTP(w, r, transport)
-        }
-    })
+func handle(w http.ResponseWriter, r *http.Request) {
+  if r.Method == http.MethodConnect {
+    handleTunnel(w, r)
+  } else {
+    handleHTTP(w, r)
+  }
 }
 
 func handleTunnel(w http.ResponseWriter, r *http.Request) {
-    destConn, err := net.DialTimeout("tcp", r.Host, *connTimeout)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusServiceUnavailable)
-        return
-    }
+  dest, err := net.DialTimeout("tcp", r.Host, *connTimeout)
+  if err != nil {
+    http.Error(w, "Conexão falhou", http.StatusServiceUnavailable)
+    return
+  }
 
-    hijacker, ok := w.(http.Hijacker)
-    if !ok {
-        destConn.Close()
-        http.Error(w, "Hijack não suportado", http.StatusInternalServerError)
-        return
-    }
+  hij, ok := w.(http.Hijacker)
+  if !ok {
+    http.Error(w, "Hijack não suportado", http.StatusInternalServerError)
+    return
+  }
 
-    clientConn, _, err := hijacker.Hijack()
-    if err != nil {
-        destConn.Close()
-        http.Error(w, err.Error(), http.StatusServiceUnavailable)
-        return
-    }
+  client, _, err := hij.Hijack()
+  if err != nil {
+    http.Error(w, "Erro no hijack", http.StatusServiceUnavailable)
+    return
+  }
 
-    _, err = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-    if err != nil {
-        clientConn.Close()
-        destConn.Close()
-        return
-    }
-
-    go pipe(destConn, clientConn)
-    go pipe(clientConn, destConn)
+  client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+  go pipe(dest, client)
+  go pipe(client, dest)
 }
 
-func handleHTTP(w http.ResponseWriter, r *http.Request, transport *http.Transport) {
-    req := r.Clone(r.Context())
-    req.RequestURI = ""
-    req.Close = true
-    resp, err := transport.RoundTrip(req)
-    if err != nil {
-        http.Error(w, "Erro: "+err.Error(), http.StatusBadGateway)
-        return
+func handleHTTP(w http.ResponseWriter, r *http.Request) {
+  r.RequestURI = ""
+  resp, err := http.DefaultTransport.RoundTrip(r)
+  if err != nil {
+    http.Error(w, err.Error(), http.StatusBadGateway)
+    return
+  }
+  defer resp.Body.Close()
+  for k, v := range resp.Header {
+    for _, vv := range v {
+      w.Header().Add(k, vv)
     }
-    defer resp.Body.Close()
-    for k, vals := range resp.Header {
-        for _, v := range vals {
-            w.Header().Add(k, v)
-        }
-    }
-    w.WriteHeader(resp.StatusCode)
-    io.Copy(w, resp.Body)
+  }
+  w.WriteHeader(resp.StatusCode)
+  io.Copy(w, resp.Body)
 }
 
-func pipe(dst io.WriteCloser, src io.ReadCloser) {
-    defer dst.Close()
-    defer src.Close()
-    buf := bufferPool.Get().(*[]byte)
-    defer bufferPool.Put(buf)
-    io.CopyBuffer(dst, src, *buf)
-}
-
-func recoverPanic() {
-    if r := recover(); r != nil {
-        log.Printf("Recovered: %v", r)
-    }
-}
-
-func resourceMonitor() {
-    for {
-        var m runtime.MemStats
-        runtime.ReadMemStats(&m)
-        log.Printf("📊 Conns: %d | Reqs: %d | Goroutines: %d | Mem: %.2fMB",
-            atomic.LoadInt64(&activeConns),
-            atomic.LoadInt64(&totalRequests),
-            runtime.NumGoroutine(),
-            float64(m.Alloc)/1024/1024)
-        time.Sleep(10 * time.Second)
-    }
-}
-
-func handleSignals(srv *http.Server) {
-    sig := make(chan os.Signal, 1)
-    signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-    <-sig
-    log.Println("🛑 Encerrando...")
-    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-    defer cancel()
-    srv.Shutdown(ctx)
+func pipe(dst net.Conn, src net.Conn) {
+  defer dst.Close()
+  defer src.Close()
+  buf := make([]byte, *bufferSize)
+  dst.SetDeadline(time.Now().Add(30 * time.Second))
+  src.SetDeadline(time.Now().Add(30 * time.Second))
+  io.CopyBuffer(dst, src, buf)
 }
 EOF
 
-# Compilar proxy
-go mod init proxy >/dev/null 2>&1 || { echo "❌ Falha ao inicializar módulo Go!"; exit 1; }
-go get golang.org/x/time/rate >/dev/null 2>&1 || { echo "❌ Falha ao baixar dependências!"; exit 1; }
-go mod tidy >/dev/null 2>&1 || { echo "❌ Falha ao organizar dependências!"; exit 1; }
-go build -o proxy >/dev/null 2>&1 || { echo "❌ Falha ao compilar proxy!"; exit 1; }
-chmod +x proxy
+echo "[4/7] 🔧 Compilando proxy Go..."
+go mod init proxy && go mod tidy
+go build -o proxy
 
-# Instalar frpc
-cd ~
-[ -d "frp" ] && rm -rf frp
-git clone https://github.com/fatedier/frp >/dev/null 2>&1 || { echo "❌ Falha ao clonar repositório FRP!"; exit 1; }
-cd ~/frp/cmd/frpc
-go build >/dev/null 2>&1 || { echo "❌ Falha ao compilar frpc!"; exit 1; }
-mkdir -p ~/proxy_node/flux
-cp frpc ~/proxy_node/flux/flux
-chmod +x ~/proxy_node/flux/flux
+########################################
+# 5. Instala e configura frpc
+########################################
+cd ~/proxy_node/flux
+git clone https://github.com/fatedier/frp frp_src && cd frp_src/cmd/frpc
+go build -o ../../flux
+cd ../../
+rm -rf frp_src
 
-# Configuração do frpc sem senha
-RANDOM_NAME="ep-$(head /dev/urandom | tr -dc a-z0-9 | head -c6)"
-RANDOM_PORT=$(( ( RANDOM % 40000 ) + 10000 ))
+CANAL="ep-$(head /dev/urandom | tr -dc a-z0-9 | head -c6)"
+PORTA=$((RANDOM % 40000 + 10000))
 
-cat > ~/proxy_node/flux/flux.ini <<EOF
+cat > flux.ini <<EOF
 [common]
 server_addr = 185.194.205.181
 server_port = 7000
+login_fail_exit = false
 
-[$RANDOM_NAME]
+[$CANAL]
 type = tcp
 local_ip = 127.0.0.1
 local_port = 8080
-remote_port = $RANDOM_PORT
+remote_port = $PORTA
 EOF
 
-# Configurar autostart
+########################################
+# 6. Watchdog e autostart
+########################################
 mkdir -p ~/.termux/boot
+
+cat > ~/proxy_node/watchdog.sh <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+pgrep -f proxy_node/server/proxy > /dev/null || nohup ~/proxy_node/server/proxy -listen :8080 -buffer=16384 > ~/proxy_node/server/proxy.log 2>&1 &
+pgrep -f proxy_node/flux/flux > /dev/null || nohup ~/proxy_node/flux/flux -c ~/proxy_node/flux/flux.ini > ~/proxy_node/flux/flux.log 2>&1 &
+EOF
+chmod +x ~/proxy_node/watchdog.sh
+
 cat > ~/.termux/boot/autostart.sh <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
 termux-wake-lock
-sleep 3
-nohup ~/proxy_node/server/proxy -listen :8080 -max-idle=$MAX_IDLE -device-level=$NIVEL > ~/proxy_node/server/proxy.log 2>&1 &
-nohup ~/proxy_node/flux/flux -c ~/proxy_node/flux/flux.ini > ~/proxy_node/flux/flux.log 2>&1 &
+sleep 5
+bash ~/proxy_node/watchdog.sh
+while true; do sleep 60; bash ~/proxy_node/watchdog.sh; done
 EOF
 chmod +x ~/.termux/boot/autostart.sh
 
-# Iniciar serviços
-nohup ~/proxy_node/server/proxy -listen :8080 -max-idle=$MAX_IDLE -device-level=$NIVEL > ~/proxy_node/server/proxy.log 2>&1 &
-nohup ~/proxy_node/flux/flux -c ~/proxy_node/flux/flux.ini > ~/proxy_node/flux/flux.log 2>&1 &
+########################################
+# 7. Inicia tudo
+########################################
+echo "[7/7] ▶️ Iniciando serviços..."
+bash ~/proxy_node/watchdog.sh
 
-# Obter IP local
 IP=$(ip a | grep inet | grep -E '192|10|172' | awk '{print $2}' | cut -d'/' -f1 | head -n1)
 [ -z "$IP" ] && IP="127.0.0.1"
 
 echo ""
-echo "========================================"
-echo "✅ Proxy Imperial ativado com sucesso!"
-echo "IP local: $IP"
-echo "Porta: 8080"
-echo "Canal: $RANDOM_NAME"
-echo "Remoto: $RANDOM_PORT"
-echo "Logs: ~/proxy_node/server/proxy.log"
-echo "========================================"
-echo "[!] Instale o Termux:Boot para iniciar ao ligar"
+echo "==========================================="
+echo "✅ Proxy configurado com sucesso!"
+echo "📡 IP local: $IP"
+echo "🔌 Porta: 8080"
+echo "🔁 Canal: $CANAL"
+echo "🌐 Porta remota: $PORTA"
+echo "🛡️ Watchdog ativo"
+echo "📂 Logs: proxy.log e flux.log"
+echo "📲 Termux:Boot iniciará automaticamente"
+echo "==========================================="
