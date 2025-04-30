@@ -2,7 +2,7 @@
 set -e
 
 echo "========================================"
-echo "[*] Instalador do Proxy Imperial (GoLang)"
+echo "[*] Instalando Proxy Imperial (GoLang)"
 echo "========================================"
 
 # Verificar se está no Termux
@@ -12,30 +12,22 @@ if [ ! -d "/data/data/com.termux/files" ]; then
 fi
 
 # Atualizar e instalar pacotes necessários
-echo "[*] Atualizando pacotes e instalando dependências..."
-pkg update -y && pkg upgrade -y || { echo "❌ Falha ao atualizar pacotes!"; exit 1; }
-pkg install -y git golang termux-api || { echo "❌ Falha ao instalar pacotes!"; exit 1; }
+echo "[*] Instalando dependências..."
+pkg update -y >/dev/null 2>&1 && pkg upgrade -y >/dev/null 2>&1 || { echo "❌ Falha ao atualizar pacotes!"; exit 1; }
+pkg install -y git golang termux-api >/dev/null 2>&1 || { echo "❌ Falha ao instalar pacotes!"; exit 1; }
 
-# Função para verificar comando
-check_command() {
-    command -v "$1" >/dev/null 2>&1 || { echo "❌ $1 não encontrado após instalação!"; exit 1; }
-}
-
-# Verificar dependências
-echo "[*] Verificando dependências..."
-check_command git
-check_command go
-check_command pkg
+# Verificar ambiente Go
+go version >/dev/null 2>&1 || { echo "❌ Ambiente Go não está configurado corretamente!"; exit 1; }
 
 # Manter dispositivo acordado
 termux-wake-lock
 
 # Seleção do nível de desempenho
 echo ""
-echo "[*] Qual o nível de desempenho do celular?"
-echo "1 = Fraco (2-3GB RAM, ex.: dispositivos antigos)"
-echo "2 = Médio (4GB RAM, ex.: Moto G31)"
-echo "3 = Forte (6GB+ RAM, ex.: Edge 30 Ultra, S20 FE)"
+echo "[*] Nível de desempenho do celular:"
+echo "1 = Fraco (2-3GB RAM)"
+echo "2 = Médio (4-6GB RAM)"
+echo "3 = Forte (6GB+ RAM)"
 read -p "Escolha [1-3]: " NIVEL
 
 # Validar entrada
@@ -61,7 +53,7 @@ esac
 mkdir -p ~/proxy_node/server
 cd ~/proxy_node/server
 
-echo "[*] Criando código Go do proxy..."
+# Criar código Go do proxy
 cat > proxy.go <<'EOF'
 package main
 
@@ -102,18 +94,18 @@ var (
     activeRequests int64
     bufferPool     sync.Pool
     limiter        *rate.Limiter
+    bufferSize     int
 )
 
 func init() {
-    // Definir tamanho do buffer com base no deviceLevel
-    bufferSize := 16 * 1024 // Padrão: 16 KB
+    bufferSize = 16 * 1024
     switch *deviceLevel {
-    case 1: // Fraco (2-3GB RAM)
-        bufferSize = 8 * 1024 // 8 KB
-    case 2: // Médio (4GB RAM)
-        bufferSize = 16 * 1024 // 16 KB
-    case 3: // Forte (6GB+ RAM)
-        bufferSize = 64 * 1024 // 64 KB
+    case 1:
+        bufferSize = 8 * 1024
+    case 2:
+        bufferSize = 16 * 1024
+    case 3:
+        bufferSize = 64 * 1024
     }
 
     bufferPool = sync.Pool{
@@ -296,35 +288,31 @@ func handleSignals(srv *http.Server) {
 }
 EOF
 
-echo "[*] Compilando proxy..."
+# Compilar proxy
 go mod init proxy >/dev/null 2>&1 || { echo "❌ Falha ao inicializar módulo Go!"; exit 1; }
 go get golang.org/x/time/rate >/dev/null 2>&1 || { echo "❌ Falha ao baixar dependências!"; exit 1; }
 go mod tidy >/dev/null 2>&1 || { echo "❌ Falha ao organizar dependências!"; exit 1; }
-go build -o proxy || { echo "❌ Falha ao compilar proxy!"; exit 1; }
+go build -o proxy >/dev/null 2>&1 || { echo "❌ Falha ao compilar proxy!"; exit 1; }
 chmod +x proxy
 
-echo "[*] Instalando frpc..."
+# Instalar frpc
 cd ~
-if [ -d "frp" ]; then
-    rm -rf frp
-fi
-git clone https://github.com/fatedier/frp || { echo "❌ Falha ao clonar repositório FRP!"; exit 1; }
+[ -d "frp" ] && rm -rf frp
+git clone https://github.com/fatedier/frp >/dev/null 2>&1 || { echo "❌ Falha ao clonar repositório FRP!"; exit 1; }
 cd ~/frp/cmd/frpc
-go build || { echo "❌ Falha ao compilar frpc!"; exit 1; }
+go build >/dev/null 2>&1 || { echo "❌ Falha ao compilar frpc!"; exit 1; }
 mkdir -p ~/proxy_node/flux
 cp frpc ~/proxy_node/flux/flux
 chmod +x ~/proxy_node/flux/flux
 
-# Configuração do frpc com autenticação
+# Configuração do frpc sem senha
 RANDOM_NAME="ep-$(head /dev/urandom | tr -dc a-z0-9 | head -c6)"
 RANDOM_PORT=$(( ( RANDOM % 40000 ) + 10000 ))
-FRP_TOKEN="159082"
 
 cat > ~/proxy_node/flux/flux.ini <<EOF
 [common]
 server_addr = 185.194.205.181
 server_port = 7000
-token = $FRP_TOKEN
 
 [$RANDOM_NAME]
 type = tcp
@@ -345,19 +333,16 @@ EOF
 chmod +x ~/.termux/boot/autostart.sh
 
 # Iniciar serviços
-echo "[*] Iniciando serviços..."
 nohup ~/proxy_node/server/proxy -listen :8080 -max-idle=$MAX_IDLE -device-level=$NIVEL > ~/proxy_node/server/proxy.log 2>&1 &
 nohup ~/proxy_node/flux/flux -c ~/proxy_node/flux/flux.ini > ~/proxy_node/flux/flux.log 2>&1 &
 
 # Obter IP local
 IP=$(ip a | grep inet | grep -E '192|10|172' | awk '{print $2}' | cut -d'/' -f1 | head -n1)
-if [ -z "$IP" ]; then
-    IP="127.0.0.1"
-fi
+[ -z "$IP" ] && IP="127.0.0.1"
 
 echo ""
 echo "========================================"
-echo "✅ Proxy Imperial (Go) ativado com sucesso!"
+echo "✅ Proxy Imperial ativado com sucesso!"
 echo "IP local: $IP"
 echo "Porta: 8080"
 echo "Canal: $RANDOM_NAME"
@@ -365,4 +350,3 @@ echo "Remoto: $RANDOM_PORT"
 echo "Logs: ~/proxy_node/server/proxy.log"
 echo "========================================"
 echo "[!] Instale o Termux:Boot para iniciar ao ligar"
-echo "[!] Token FRP configurado: $FRP_TOKEN"
