@@ -151,26 +151,36 @@ func proxyHandler(transport *http.Transport) http.Handler {
 }
 
 func handleTunnel(w http.ResponseWriter, r *http.Request) {
-	dest, err := net.DialTimeout("tcp", r.Host, *connTimeout)
+	destConn, err := net.DialTimeout("tcp", r.Host, *connTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
-	hj, ok := w.(http.Hijacker)
+
+	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		dest.Close()
+		destConn.Close()
 		http.Error(w, "Hijack não suportado", http.StatusInternalServerError)
 		return
 	}
-	client, _, err := hj.Hijack()
+
+	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		dest.Close()
+		destConn.Close()
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	go pipe(dest, client)
-	go pipe(client, dest)
+
+	// ✅ Escreve diretamente para o socket, padrão exigido por HTTPS
+	_, err = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	if err != nil {
+		clientConn.Close()
+		destConn.Close()
+		return
+	}
+
+	go pipe(destConn, clientConn)
+	go pipe(clientConn, destConn)
 }
 
 func handleHTTP(w http.ResponseWriter, r *http.Request, transport *http.Transport) {
