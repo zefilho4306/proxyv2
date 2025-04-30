@@ -5,13 +5,11 @@ echo "==========================================="
 echo "🚀 Instalador Proxy Imperial (Alta Performance)"
 echo "==========================================="
 
-# Verifica ambiente
 if [ ! -d "/data/data/com.termux/files" ]; then
-  echo "❌ Este script deve ser executado no Termux!"
+  echo "❌ Este script só funciona no Termux."
   exit 1
 fi
 
-# Acorda o celular
 termux-wake-lock
 mkdir -p ~/proxy_node/server ~/proxy_node/flux
 
@@ -21,7 +19,6 @@ pkg update -y && pkg upgrade -y
 echo "[2/7] 📦 Instalando dependências..."
 pkg install -y git golang wget termux-api
 
-# Verifica Go
 go version || { echo "❌ Go não está instalado corretamente!"; exit 1; }
 
 echo ""
@@ -38,9 +35,6 @@ case $NIVEL in
   3) MAX_IDLE=300; BUFFSIZE=65536 ;;
 esac
 
-########################################
-# 4. Proxy Go otimizado
-########################################
 cd ~/proxy_node/server
 
 cat > proxy.go <<EOF
@@ -48,7 +42,6 @@ package main
 
 import (
   "context"
-  "crypto/tls"
   "flag"
   "io"
   "log"
@@ -159,9 +152,6 @@ echo "[4/7] 🔧 Compilando proxy Go..."
 go mod init proxy && go mod tidy
 go build -o proxy
 
-########################################
-# 5. Instala e configura frpc
-########################################
 cd ~/proxy_node/flux
 git clone https://github.com/fatedier/frp frp_src && cd frp_src/cmd/frpc
 go build -o ../../flux
@@ -170,6 +160,7 @@ rm -rf frp_src
 
 CANAL="ep-$(head /dev/urandom | tr -dc a-z0-9 | head -c6)"
 PORTA=$((RANDOM % 40000 + 10000))
+echo "$CANAL:$PORTA" > ~/proxy_node/flux/ultima_porta.txt
 
 cat > flux.ini <<EOF
 [common]
@@ -184,9 +175,6 @@ local_port = 8080
 remote_port = $PORTA
 EOF
 
-########################################
-# 6. Watchdog e autostart
-########################################
 mkdir -p ~/.termux/boot
 
 cat > ~/proxy_node/watchdog.sh <<'EOF'
@@ -205,9 +193,6 @@ while true; do sleep 60; bash ~/proxy_node/watchdog.sh; done
 EOF
 chmod +x ~/.termux/boot/autostart.sh
 
-########################################
-# 7. Inicia tudo
-########################################
 echo "[7/7] ▶️ Iniciando serviços..."
 bash ~/proxy_node/watchdog.sh
 
@@ -218,10 +203,9 @@ echo ""
 echo "==========================================="
 echo "✅ Proxy configurado com sucesso!"
 echo "📡 IP local: $IP"
-echo "🔌 Porta: 8080"
-echo "🔁 Canal: $CANAL"
-echo "🌐 Porta remota: $PORTA"
-echo "🛡️ Watchdog ativo"
-echo "📂 Logs: proxy.log e flux.log"
-echo "📲 Termux:Boot iniciará automaticamente"
+echo "🔌 Porta local: 8080"
+echo "🔁 Canal FRPC: $CANAL"
+echo "🌐 Porta remota liberada na VPS: $PORTA"
+echo "📄 Info salva em: ~/proxy_node/flux/ultima_porta.txt"
+echo "🛡️ Watchdog ativo e autostart no boot"
 echo "==========================================="
