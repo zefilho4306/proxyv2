@@ -6,26 +6,26 @@ echo "[*] Instalador do Proxy Imperial (GoLang)"
 echo "========================================"
 
 # Verificar se está no Termux
-if [ ! -d "/data/data/com.termux" ]; then
+if [ ! -d "/data/data/com.termux/files" ]; then
     echo "❌ Este script deve ser executado no Termux!"
     exit 1
 fi
 
+# Atualizar e instalar pacotes necessários
+echo "[*] Atualizando pacotes e instalando dependências..."
+pkg update -y && pkg upgrade -y || { echo "❌ Falha ao atualizar pacotes!"; exit 1; }
+pkg install -y git golang termux-api || { echo "❌ Falha ao instalar pacotes!"; exit 1; }
+
 # Função para verificar comando
 check_command() {
-    command -v "$1" >/dev/null 2>&1 || { echo "❌ $1 não encontrado!"; exit 1; }
+    command -v "$1" >/dev/null 2>&1 || { echo "❌ $1 não encontrado após instalação!"; exit 1; }
 }
 
 # Verificar dependências
 echo "[*] Verificando dependências..."
-check_command pkg
 check_command git
 check_command go
-
-# Atualizar e instalar pacotes
-echo "[*] Atualizando pacotes..."
-pkg update -y && pkg upgrade -y || { echo "❌ Falha ao atualizar pacotes!"; exit 1; }
-pkg install -y git golang termux-api || { echo "❌ Falha ao instalar pacotes!"; exit 1; }
+check_command pkg
 
 # Manter dispositivo acordado
 termux-wake-lock
@@ -365,4 +365,4 @@ echo "Remoto: $RANDOM_PORT"
 echo "Logs: ~/proxy_node/server/proxy.log"
 echo "========================================"
 echo "[!] Instale o Termux:Boot para iniciar ao ligar"
-echo "[!] Configure o token FRP no servidor ($FRP_TOKEN)"
+echo "[!] Token FRP configurado: $FRP_TOKEN"
